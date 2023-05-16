@@ -1,0 +1,131 @@
+service: dama-upload-image-service
+
+frameworkVersion: '3'
+configValidationMode: error
+
+
+provider:
+  name: aws
+  runtime: nodejs16.x
+  stage: dev
+  region: us-east-1
+  environment:
+    ACCOUNT_NUMBER: 944734435805
+    IAM_ROLE_NAME: ApiGatewayInvokeLambdaRole
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: "*"
+
+plugins:
+  - serverless-webpack
+
+package:
+  individually: true
+  excludeDevDependencies: false
+#  exclude:
+#    - node_modules/**
+#  webpack:
+#    webpackConfig: ./webpack.config.js
+#    includeModules: true
+
+
+custom:
+  fileUploadBucketName: ${self:service}-bucket-${self:provider.stage}
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules:
+      packagePath: ./package.json
+
+functions:
+  uploadImage:
+    handler: src/handlers/sqsHandler.handler
+    events:
+      - sqs:
+          arn: arn:aws:sqs:us-east-1:944734435805:upload-image-queue
+
+  deleteImageByApi:
+    handler: src/handlers/deleteImageByApi.handler
+    events:
+      - http:
+          path: /photos/{id}
+          method: delete
+          cors: true
+
+  uploadImageByBucket:
+    handler: src/handlers/uploadImageByBucket.handler
+    events:
+      - s3:
+          bucket: ${self:service}-bucket-${self:provider.stage}
+          event: s3:ObjectCreated:Put
+          existing: true
+          forceDeploy: true
+
+  createPhoto:
+    handler: src/handlers/uploadImage.handler
+    role: arn:aws:iam::${self:provider.environment.ACCOUNT_NUMBER}:role/${self:provider.environment.IAM_ROLE_NAME}
+    events:
+      - http:
+          method: post
+          path: /photos
+          cors: true
+
+  getAllPhotos:
+    handler: src/handlers/getAllPhotos.handler
+    role: arn:aws:iam::${self:provider.environment.ACCOUNT_NUMBER}:role/${self:provider.environment.IAM_ROLE_NAME}
+    events:
+      - http:
+          method: get
+          path: /photos
+          cors: true
+
+
+  getPhoto:
+    handler: src/handlers/getPhotos.handler
+    role: arn:aws:iam::${self:provider.environment.ACCOUNT_NUMBER}:role/${self:provider.environment.IAM_ROLE_NAME}
+    events:
+      - http:
+          method: get
+          path: /photos/{id}
+          cors: true
+
+  deletePhoto:
+    handler: src/handlers/deletePhoto.handler
+    role: arn:aws:iam::${self:provider.environment.ACCOUNT_NUMBER}:role/${self:provider.environment.IAM_ROLE_NAME}
+    events:
+      - http:
+          method: delete
+          path: /photos/{id}
+          cors: true
+
+resources:
+  Resources:
+    MyBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.fileUploadBucketName}
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Metadata:
+        'AWS::CloudFormation::DependsOn':
+          - BucketNameParam
+
+    PhotoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: images-table
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    MyQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: upload-image-queue
